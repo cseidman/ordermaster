@@ -1,14 +1,12 @@
 use chrono::{DateTime, Utc};
 use crate::error::Error;
 use crate::orderbook::{self, Exchange, InTick, ToLevel, ToLevels, ToTick};
-use crate::websocket;
+use crate::{BITSTAMP_WS_URL, DEPTH, websocket};
 use futures::SinkExt;
 use log::{debug, info};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use tungstenite::protocol::Message;
-
-const BITSTAMP_WS_URL: &str = "wss://ws.bitstamp.net";
 
 #[derive(Debug, Deserialize, Serialize, PartialEq)]
 #[serde(tag = "event")]
@@ -33,12 +31,11 @@ enum Event {
 }
 
 impl ToTick for Event {
-    /// Converts the `Event` into a `Option<InTick>`. Only keep the top ten levels of bids and asks.
     fn maybe_to_tick(&self) -> Option<InTick> {
         match self {
             Event::Data { data, .. } => {
-                let bids = data.bids.to_levels(orderbook::Side::Bid, 10);
-                let asks = data.asks.to_levels(orderbook::Side::Ask, 10);
+                let bids = data.bids.to_levels(orderbook::Side::Bid, DEPTH);
+                let asks = data.asks.to_levels(orderbook::Side::Ask, DEPTH);
 
                 Some(InTick { exchange: Exchange::Bitstamp, bids, asks })
             },
@@ -80,7 +77,6 @@ struct Level {
 }
 
 impl ToLevel for Level {
-    /// Converts a `bitstamp::Level` into a `orderbook::Level`.
     fn to_level(&self, side: orderbook::Side) -> orderbook::Level {
         orderbook::Level::new(side, self.price, self.amount, Exchange::Bitstamp)
     }
@@ -96,7 +92,7 @@ pub(crate) async fn connect(symbol: &String) -> Result<websocket::WsStream, Erro
 
 pub(crate) fn parse(msg: Message) -> Result<Option<InTick>, Error> {
     let e = match msg {
-        Message::Binary(x) => { info!("binary {:?}", x); None },
+
         Message::Text(x) => {
             debug!("{:?}", x);
 
@@ -108,10 +104,16 @@ pub(crate) fn parse(msg: Message) -> Result<Option<InTick>, Error> {
 
             Some(e)
         },
+        _ => {
+            None
+        }
+        /*
         Message::Ping(x) => { info!("Ping {:?}", x); None },
         Message::Pong(x) => { info!("Pong {:?}", x); None },
         Message::Close(x) => { info!("Close {:?}", x); None },
         Message::Frame(x) => { info!("Frame {:?}", x); None },
+
+         */
     };
     Ok(e.map(|e| e.maybe_to_tick()).flatten())
 }
@@ -176,81 +178,6 @@ mod microtimestamp {
     }
 }
 
-#[cfg(test)]
-mod test {
-    use chrono::TimeZone;
-    use rust_decimal_macros::dec;
-    use crate::bitstamp::*;
 
-    #[test]
-    fn should_deserialize_event_data() -> Result<(), Error> {
-        assert_eq!(deserialize("{\
-                       \"data\":{\
-                           \"timestamp\":\"1652103479\",\
-                           \"microtimestamp\":\"1652103479857383\",\
-                           \"bids\":[[\"0.07295794\",\"0.46500000\"],[\"0.07295284\",\"0.60423006\"]],\
-                           \"asks\":[[\"0.07301587\",\"0.46500000\"],[\"0.07301952\",\"7.74449027\"]]\
-                       },\
-                       \"channel\":\"order_book_ethbtc\",\
-                       \"event\":\"data\"\
-                   }".to_string())?,
-                   Event::Data{
-                       data: InData {
-                           timestamp: Utc.timestamp(1652103479, 0),
-                           microtimestamp: Utc.timestamp_nanos(1652103479857383000),
-                           bids: vec![
-                               Level { price: dec!(0.07295794), amount: dec!(0.46500000) },
-                               Level { price: dec!(0.07295284), amount: dec!(0.60423006) },
-                           ],
-                           asks: vec![
-                               Level { price: dec!(0.07301587), amount: dec!(0.46500000) },
-                               Level { price: dec!(0.07301952), amount: dec!(7.74449027) },
-                           ],
-                       },
-                       channel: "order_book_ethbtc".to_string(),
-                   });
-        Ok(())
-    }
 
-    #[test]
-    fn should_deserialize_subscription_succeeded() -> Result<(), Error> {
-        assert_eq!(deserialize("{\
-                       \"data\":{},\
-                       \"channel\":\"order_book_ethbtc\",\
-                       \"event\":\"bts:subscription_succeeded\"
-                   }".to_string())?,
-                   Event::SubscriptionSucceeded{
-                       data: InSubscription{},
-                       channel: "order_book_ethbtc".to_string(),
-                   });
-        Ok(())
-    }
-
-    #[test]
-    fn should_deserialize_error() -> Result<(), Error> {
-        assert_eq!(deserialize("{\
-                       \"event\":\"bts:error\",\
-                       \"channel\":\"\",\
-                       \"data\":{\
-                           \"code\":null,\
-                           \"message\":\"Incorrect JSON format.\"\
-                       }\
-                   }".to_string())?,
-                   Event::Error{
-                       data: InError{ code: None, message: "Incorrect JSON format.".to_string() },
-                       channel: "".to_string(),
-                   });
-        Ok(())
-    }
-
-    #[test]
-    fn should_serialize_subscribe() -> Result<(), Error> {
-        assert_eq!(serialize(Event::Subscribe{
-            data: OutSubscription { channel: "order_book_ethbtc".to_string() }
-        })?,
-        "{\"event\":\"bts:subscribe\",\"data\":{\"channel\":\"order_book_ethbtc\"}}".to_string()
-        );
-        Ok(())
-    }
-}
 

@@ -1,10 +1,11 @@
 mod binance;
 mod bitstamp;
-mod coinbase;
 mod error;
 mod grpc;
-mod kraken;
 mod orderbook;
-mod stdin;
 mod websocket;
-pub mod orderly;
+pub mod ordermaster;
+
+pub const DEPTH:usize = 10 ;
+pub const BINANCE_WS_URL: &str = "wss://stream.binance.com:9443/ws";
+pub const BITSTAMP_WS_URL: &str = "wss://ws.bitstamp.net";

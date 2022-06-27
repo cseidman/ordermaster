@@ -15,8 +15,6 @@ pub enum Error {
 pub enum ExchangeErr {
     Bitstamp(Error),
     Binance(Error),
-    Kraken(Error),
-    Coinbase(Error),
 }
 
 impl From<tungstenite::Error> for Error {
